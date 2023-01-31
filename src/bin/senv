@@ -1,0 +1,72 @@
+#!/usr/bin/bash
+
+main() { 
+	local state_directory="${XDG_STATE_HOME:-$HOME/.local/state}/senv"
+	local curr_stack_file="$state_directory/current_stack"
+
+	case $1 in
+		'push')
+			# Find the target .env file
+			local env_file="$2"
+			if [[ -z "$env_file" ]]; then
+				env_file="./.env"
+			fi
+
+			# Ensure the file exists
+			test -f "$env_file" || (printf "The file '%s' does not exist" "$env_file" > /dev/stderr; exit 1)
+
+			# Resolve the path
+			env_file=$(realpath "$env_file")
+
+			# Load the environment variables
+			load_file "$env_file"
+
+			# Record the .env file that was loaded
+			echo "$env_file" >> "$curr_stack_file"
+			;;
+		'pop') 
+			# Determine the last file loaded
+			local last_loaded
+			last_loaded="$(tail -n 1 "$curr_stack_file")"
+
+			# Unload the file
+			unload_file "$last_loaded"
+
+			# Clear the file from history
+			local tmpFile
+			tmpFile=$(mktemp)
+			head -n -1 "$curr_stack_file" > "$tmpFile"
+			cat "$tmpFile" > "$curr_stack_file"
+
+			# Reload all previous files in the stack
+			while read -r f ; do
+				load_file "$f"
+			done < "$curr_stack_file"
+
+			;;
+	esac
+} && main "$@"
+
+load_file() {
+	local env_file="$1"
+
+	local var_name
+	local var_value
+
+	sed -E '/^#/d;/^\s+$/d' "$env_file" | while read -r kv; do
+		var_name=$($kv | cut -d= -f1)
+		var_value=$($kv | cut -d= -f2)
+		eval "export $var_name=$var_value"
+	done
+}
+
+unload_file() {
+	local env_file="$1"
+
+	local var_name
+
+	sed -E '/^#/d;/^\s+$/d' "$env_file" | while read -r kv; do
+		var_name="$($kv | cut -d= -f1)"
+		eval "unset $var_name"
+	done
+}
